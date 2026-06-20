@@ -2,6 +2,8 @@ import httpx
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.llms.base import LLM
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import Document
 from typing import Any, Mapping, Optional, List
 from config import CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, LLM_MODEL, TOP_K_RESULTS
 
@@ -33,6 +35,15 @@ class CloudflareLLM(LLM):
         return {"account_id": self.account_id, "model": self.model}
 
 
+class VectorStoreRetriever(BaseRetriever):
+    vectorstore: Any
+    k: int = 4
+
+    def _get_relevant_documents(self, query: str) -> List[Document]:
+        results = self.vectorstore.similarity_search(query, k=self.k)
+        return [Document(page_content=r.page_content, metadata=r.metadata) for r in results]
+
+
 def get_llm():
     return CloudflareLLM(
         account_id=CLOUDFLARE_ACCOUNT_ID,
@@ -46,7 +57,7 @@ def create_conversational_chain(vectorstore):
     memory = ConversationBufferWindowMemory(
         k=10, memory_key="chat_history", return_messages=True, output_key="answer",
     )
-    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": TOP_K_RESULTS})
+    retriever = VectorStoreRetriever(vectorstore=vectorstore, k=TOP_K_RESULTS)
     return ConversationalRetrievalChain.from_llm(
         llm=llm, retriever=retriever, memory=memory, return_source_documents=True, verbose=False,
     )
