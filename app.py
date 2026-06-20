@@ -1,7 +1,7 @@
 import streamlit as st
 from rag.loader import load_documents, split_documents
 from rag.vectorstore import create_vectorstore
-from rag.chain import create_conversational_chain
+from rag.chain import SimpleRAG
 import time
 
 st.set_page_config(page_title="DocMind AI", page_icon="🧠", layout="wide", initial_sidebar_state="expanded")
@@ -210,7 +210,7 @@ with st.sidebar:
                 progress.progress(90)
                 
                 st.session_state.vectorstore = vectorstore
-                st.session_state.chain = create_conversational_chain(vectorstore)
+                st.session_state.rag = SimpleRAG(vectorstore)
                 
                 progress.progress(100)
                 status.text("✅ Ready!")
@@ -238,7 +238,7 @@ with st.sidebar:
         """, unsafe_allow_html=True)
 
 # ---- MAIN CHAT ----
-if "chain" not in st.session_state:
+if "rag" not in st.session_state:
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("""
@@ -294,12 +294,9 @@ else:
         """, unsafe_allow_html=True)
 
         with st.spinner("🧠 Thinking..."):
-            result = st.session_state.chain({"question": prompt})
+            result = st.session_state.rag.query(prompt)
             answer = result["answer"]
-            sources = [
-                {"source": doc.metadata.get("source", "Unknown"), "page": doc.metadata.get("page", "N/A")}
-                for doc in result.get("source_documents", [])
-            ]
+            sources = result["sources"]
 
         st.markdown(f"""
         <div style="display:flex;justify-content:flex-start">

@@ -1,6 +1,4 @@
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from config import CHUNK_SIZE, CHUNK_OVERLAP
+from pypdf import PdfReader
 import tempfile
 import os
 
@@ -13,26 +11,26 @@ def load_documents(uploaded_files):
             tmp_path = tmp.name
         try:
             if uploaded_file.name.endswith(".pdf"):
-                loader = PyPDFLoader(tmp_path)
-                docs = loader.load()
+                reader = PdfReader(tmp_path)
+                for i, page in enumerate(reader.pages):
+                    text = page.extract_text()
+                    if text:
+                        documents.append(type("Doc", (), {"page_content": text, "metadata": {"source": uploaded_file.name, "page": i + 1}})())
             elif uploaded_file.name.endswith(".txt"):
-                loader = TextLoader(tmp_path)
-                docs = loader.load()
-            else:
-                continue
-            for doc in docs:
-                doc.metadata["source"] = uploaded_file.name
-            documents.extend(docs)
+                with open(tmp_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                documents.append(type("Doc", (), {"page_content": text, "metadata": {"source": uploaded_file.name, "page": 1}})())
         finally:
             os.unlink(tmp_path)
     return documents
 
 
-def split_documents(documents):
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-        length_function=len,
-        add_start_index=True,
-    )
-    return text_splitter.split_documents(documents)
+def split_documents(documents, chunk_size=1000, chunk_overlap=200):
+    chunks = []
+    for doc in documents:
+        text = doc.page_content
+        words = text.split()
+        for i in range(0, len(words), chunk_size - chunk_overlap):
+            chunk_text = " ".join(words[i:i + chunk_size])
+            chunks.append(type("Doc", (), {"page_content": chunk_text, "metadata": doc.metadata})())
+    return chunks

@@ -1,26 +1,43 @@
 import httpx
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferWindowMemory
-from langchain.llms.base import LLM
-from langchain_core.retrievers import BaseRetriever
-from langchain_core.documents import Document
-from typing import Any, Mapping, Optional, List
+from typing import Any, List
 from config import CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, LLM_MODEL, TOP_K_RESULTS
 
 
-class CloudflareLLM(LLM):
-    account_id: str = ""
-    api_token: str = ""
-    model: str = ""
+class SimpleRAG:
+    def __init__(self, vectorstore):
+        self.vectorstore = vectorstore
+        self.chat_history = []
 
-    @property
-    def _llm_type(self) -> str:
-        return "cloudflare_workers_ai"
+    def query(self, question: str) -> dict:
+        docs = self.vectorstore.similarity_search(question, k=TOP_K_RESULTS)
+        context = "\n\n".join([f"[Source: {d.metadata.get('source', 'Unknown')}]\n{d.page_content}" for d in docs])
 
-    def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs: Any) -> str:
-        url = f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/ai/run/{self.model}"
+        history_text = ""
+        for h in self.chat_history[-10:]:
+            history_text += f"User: {h['user']}\nAssistant: {h['assistant']}\n"
+
+        prompt = f"""You are a helpful assistant. Answer the user's question based on the provided context.
+If the answer is not in the context, say "I don't have enough information to answer that."
+Be concise and accurate. Cite sources when possible.
+
+Context:
+{context}
+
+{history_text}User: {question}
+Assistant:"""
+
+        answer = self._call_llm(prompt)
+
+        sources = [{"source": d.metadata.get("source", "Unknown"), "page": d.metadata.get("page", "N/A")} for d in docs]
+
+        self.chat_history.append({"user": question, "assistant": answer})
+
+        return {"answer": answer, "sources": sources, "source_documents": docs}
+
+    def _call_llm(self, prompt: str) -> str:
+        url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/{LLM_MODEL}"
         headers = {
-            "Authorization": f"Bearer {self.api_token}",
+            "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
             "Content-Type": "application/json",
         }
         payload = {"messages": [{"role": "user", "content": prompt}]}
@@ -29,35 +46,3 @@ class CloudflareLLM(LLM):
         if data.get("success"):
             return data["result"]["response"]
         raise Exception(f"Cloudflare API error: {data.get('errors')}")
-
-    @property
-    def _identifying_params(self) -> Mapping[str, Any]:
-        return {"account_id": self.account_id, "model": self.model}
-
-
-class VectorStoreRetriever(BaseRetriever):
-    vectorstore: Any
-    k: int = 4
-
-    def _get_relevant_documents(self, query: str) -> List[Document]:
-        results = self.vectorstore.similarity_search(query, k=self.k)
-        return [Document(page_content=r.page_content, metadata=r.metadata) for r in results]
-
-
-def get_llm():
-    return CloudflareLLM(
-        account_id=CLOUDFLARE_ACCOUNT_ID,
-        api_token=CLOUDFLARE_API_TOKEN,
-        model=LLM_MODEL,
-    )
-
-
-def create_conversational_chain(vectorstore):
-    llm = get_llm()
-    memory = ConversationBufferWindowMemory(
-        k=10, memory_key="chat_history", return_messages=True, output_key="answer",
-    )
-    retriever = VectorStoreRetriever(vectorstore=vectorstore, k=TOP_K_RESULTS)
-    return ConversationalRetrievalChain.from_llm(
-        llm=llm, retriever=retriever, memory=memory, return_source_documents=True, verbose=False,
-    )
