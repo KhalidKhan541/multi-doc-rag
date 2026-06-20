@@ -1,5 +1,4 @@
 import numpy as np
-import hashlib
 import json
 import os
 
@@ -12,7 +11,7 @@ class SimpleVectorStore:
     def add_documents(self, chunks):
         for chunk in chunks:
             text = chunk.page_content
-            embedding = self._simple_embedding(text)
+            embedding = self._fast_embedding(text)
             self.documents.append({
                 "content": text,
                 "metadata": chunk.metadata,
@@ -20,39 +19,28 @@ class SimpleVectorStore:
             self.embeddings.append(embedding)
 
     def similarity_search(self, query, k=4):
-        query_embedding = self._simple_embedding(query)
-        similarities = []
-        for i, doc_embedding in enumerate(self.embeddings):
-            sim = self._cosine_similarity(query_embedding, doc_embedding)
-            similarities.append((sim, i))
-        similarities.sort(reverse=True, key=lambda x: x[0])
+        if not self.embeddings:
+            return []
+        query_embedding = self._fast_embedding(query)
+        emb_matrix = np.array(self.embeddings)
+        sims = emb_matrix @ query_embedding
+        top_idx = np.argsort(sims)[::-1][:k]
         results = []
-        for sim, idx in similarities[:k]:
+        for idx in top_idx:
             doc = self.documents[idx]
             results.append(type("Doc", (), {"page_content": doc["content"], "metadata": doc["metadata"]})())
         return results
 
-    def _simple_embedding(self, text):
-        words = text.lower().split()
-        vocab = {}
-        for word in words:
-            idx = int(hashlib.md5(word.encode()).hexdigest(), 16) % 512
-            vocab[idx] = vocab.get(idx, 0) + 1
-        vec = np.zeros(512)
-        for idx, count in vocab.items():
-            vec[idx] = count
+    def _fast_embedding(self, text):
+        words = text.lower().split()[:200]
+        vec = np.zeros(256)
+        for i, word in enumerate(words):
+            idx = hash(word) % 256
+            vec[idx] += 1.0 / (i + 1)
         norm = np.linalg.norm(vec)
         if norm > 0:
-            vec = vec / norm
+            vec /= norm
         return vec
-
-    def _cosine_similarity(self, a, b):
-        dot = np.dot(a, b)
-        norm_a = np.linalg.norm(a)
-        norm_b = np.linalg.norm(b)
-        if norm_a == 0 or norm_b == 0:
-            return 0
-        return dot / (norm_a * norm_b)
 
 
 def create_vectorstore(chunks, persist_directory="./vector_store"):
@@ -73,5 +61,5 @@ def load_vectorstore(persist_directory="./vector_store"):
             data = json.load(f)
         store.documents = data["documents"]
         for doc in store.documents:
-            store.embeddings.append(store._simple_embedding(doc["content"]))
+            store.embeddings.append(store._fast_embedding(doc["content"]))
     return store

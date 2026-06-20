@@ -14,23 +14,24 @@ def load_documents(uploaded_files):
                 reader = PdfReader(tmp_path)
                 for i, page in enumerate(reader.pages):
                     text = page.extract_text()
-                    if text:
-                        documents.append(type("Doc", (), {"page_content": text, "metadata": {"source": uploaded_file.name, "page": i + 1}})())
+                    if text and len(text.strip()) > 10:
+                        documents.append(type("Doc", (), {"page_content": text[:3000], "metadata": {"source": uploaded_file.name, "page": i + 1}})())
             elif uploaded_file.name.endswith(".txt"):
                 with open(tmp_path, "r", encoding="utf-8") as f:
                     text = f.read()
-                documents.append(type("Doc", (), {"page_content": text, "metadata": {"source": uploaded_file.name, "page": 1}})())
+                documents.append(type("Doc", (), {"page_content": text[:5000], "metadata": {"source": uploaded_file.name, "page": 1}})())
         finally:
             os.unlink(tmp_path)
     return documents
 
 
-def split_documents(documents, chunk_size=1000, chunk_overlap=200):
+def split_documents(documents, chunk_size=500, chunk_overlap=50):
     chunks = []
     for doc in documents:
         text = doc.page_content
         words = text.split()
         for i in range(0, len(words), chunk_size - chunk_overlap):
             chunk_text = " ".join(words[i:i + chunk_size])
-            chunks.append(type("Doc", (), {"page_content": chunk_text, "metadata": doc.metadata})())
+            if len(chunk_text.strip()) > 20:
+                chunks.append(type("Doc", (), {"page_content": chunk_text, "metadata": doc.metadata})())
     return chunks

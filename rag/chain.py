@@ -10,28 +10,23 @@ class SimpleRAG:
 
     def query(self, question: str) -> dict:
         docs = self.vectorstore.similarity_search(question, k=TOP_K_RESULTS)
-        context = "\n\n".join([f"[Source: {d.metadata.get('source', 'Unknown')}]\n{d.page_content}" for d in docs])
+        context = "\n\n".join([d.page_content[:500] for d in docs])
 
         history_text = ""
-        for h in self.chat_history[-10:]:
-            history_text += f"User: {h['user']}\nAssistant: {h['assistant']}\n"
+        for h in self.chat_history[-6:]:
+            history_text += f"User: {h['user'][:200]}\nAssistant: {h['assistant'][:200]}\n"
 
-        prompt = f"""You are a helpful assistant. Answer the user's question based on the provided context.
-If the answer is not in the context, say "I don't have enough information to answer that."
-Be concise and accurate. Cite sources when possible.
+        prompt = f"""Answer based on context. Be concise.
 
-Context:
-{context}
+Context: {context[:2000]}
 
-{history_text}User: {question}
-Assistant:"""
+{history_text}Question: {question}
+Answer:"""
 
         answer = self._call_llm(prompt)
 
         sources = [{"source": d.metadata.get("source", "Unknown"), "page": d.metadata.get("page", "N/A")} for d in docs]
-
         self.chat_history.append({"user": question, "assistant": answer})
-
         return {"answer": answer, "sources": sources, "source_documents": docs}
 
     def _call_llm(self, prompt: str) -> str:
@@ -40,9 +35,12 @@ Assistant:"""
             "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
             "Content-Type": "application/json",
         }
-        payload = {"messages": [{"role": "user", "content": prompt}]}
-        response = httpx.post(url, json=payload, headers=headers, timeout=60.0)
-        data = response.json()
-        if data.get("success"):
-            return data["result"]["response"]
-        raise Exception(f"Cloudflare API error: {data.get('errors')}")
+        payload = {"messages": [{"role": "user", "content": prompt[:4000]}]}
+        try:
+            response = httpx.post(url, json=payload, headers=headers, timeout=30.0)
+            data = response.json()
+            if data.get("success"):
+                return data["result"]["response"]
+            return f"Error: {data.get('errors', 'Unknown error')}"
+        except Exception as e:
+            return f"Connection error: {str(e)}"
